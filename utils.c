@@ -38,6 +38,7 @@
 #include <sys/statfs.h>
 #include <linux/magic.h>
 #include <getopt.h>
+#include <sys/utsname.h>
 
 #include "kerncompat.h"
 #include "radix-tree.h"
@@ -1555,6 +1556,53 @@ char* btrfs_parse_fs_features(char *namelist, u64 *flags)
 	return NULL;
 }
 
+void print_kernel_version(FILE *stream, u32 version)
+{
+	u32 v[3];
+
+	v[0] = version & 0xFF;
+	v[1] = (version >> 8) & 0xFF;
+	v[2] = version >> 16;
+	fprintf(stream, "%u.%u", v[2], v[1]);
+	if (v[0])
+		fprintf(stream, ".%u", v[0]);
+}
+
+u32 get_running_kernel_version(void)
+{
+	struct utsname utsbuf;
+	char *tmp;
+	char *saveptr = NULL;
+	u32 version;
+
+	uname(&utsbuf);
+	if (strcmp(utsbuf.sysname, "Linux") != 0) {
+		error("unsupported system: %s", utsbuf.sysname);
+		exit(1);
+	}
+	/* 1.2.3-4-name */
+	tmp = strchr(utsbuf.release, '-');
+	if (tmp)
+		*tmp = 0;
+
+	tmp = strtok_r(utsbuf.release, ".", &saveptr);
+	if (!string_is_numerical(tmp))
+		return (u32)-1;
+	version = atoi(tmp) << 16;
+	tmp = strtok_r(NULL, ".", &saveptr);
+	if (!string_is_numerical(tmp))
+		return (u32)-1;
+	version |= atoi(tmp) << 8;
+	tmp = strtok_r(NULL, ".", &saveptr);
+	if (tmp) {
+		if (!string_is_numerical(tmp))
+			return (u32)-1;
+		version |= atoi(tmp);
+	}
+
+	return version;
+}
+
 u64 btrfs_device_size(int fd, struct stat *st)
 {
 	u64 size;
@@ -2336,7 +2384,7 @@ int check_mounted_where(int fd, const char *file, char *where, int size,
 
 	/* scan other devices */
 	if (is_btrfs && total_devs > 1) {
-		ret = btrfs_scan_lblkid();
+		ret = btrfs_scan_devices();
 		if (ret)
 			return ret;
 	}
@@ -2416,7 +2464,7 @@ int btrfs_register_one_device(const char *fname)
 
 /*
  * Register all devices in the fs_uuid list created in the user
- * space. Ensure btrfs_scan_lblkid() is called before this func.
+ * space. Ensure btrfs_scan_devices() is called before this func.
  */
 int btrfs_register_all_devices(void)
 {
@@ -3455,7 +3503,7 @@ int test_dev_for_mkfs(const char *file, int force_overwrite)
 	return 0;
 }
 
-int btrfs_scan_lblkid(void)
+int btrfs_scan_devices(void)
 {
 	int fd = -1;
 	int ret;
